@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# overleaf-ctl.sh - Management CLI for building and running Overleaf Community Edition via Podman
+# overleaf-ctl.sh - Management CLI for building and running Overleaf Community Edition via Podman or Docker
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,14 +14,14 @@ DEFAULT_MODE="pod"
 
 usage() {
   cat <<'EOF'
-overleaf-ctl.sh - Build and manage Overleaf Community Edition on Podman
+overleaf-ctl.sh - Build and manage Overleaf Community Edition on Podman or Docker
 
 USAGE:
   overleaf-ctl.sh <command> [options]
 
 COMMANDS:
   build             Build a custom Overleaf image with extended TeX Live / tools
-  up                Start the Overleaf stack (Overleaf, MongoDB, Redis) via Podman
+  up                Start the Overleaf stack (Overleaf, MongoDB, Redis)
   down              Stop and remove the Overleaf stack (preserves volumes)
   status            Show stack status, container health, and endpoint reachability
   logs [service]    View logs (services: server, mongo, redis, or all; default: server)
@@ -40,7 +40,7 @@ OPTIONS FOR 'build':
 OPTIONS FOR 'up':
   --port <port>         Host port to expose Overleaf on (default: 8080)
   --image <image>       Overleaf container image to use (default: sharelatex/sharelatex:latest)
-  --mode <mode>         Deployment mode: 'pod' (recommended) or 'network' (default: pod)
+  --mode <mode>         Deployment mode: 'pod' (Podman only) or 'network' (default: pod for Podman, network for Docker)
   --name <name>         Base name for pod/containers (default: overleaf)
   --mongo <image>       MongoDB image (default: mongo:8.0)
   --redis <image>       Redis image (default: redis:7-alpine)
@@ -52,8 +52,13 @@ OPTIONS FOR 'create-admin':
 OPTIONS FOR 'clean':
   --volumes         Also delete named data volumes (DATA WILL BE LOST)
 
+RUNTIME DETECTION:
+  Automatically detects and prefers 'podman' when available. If 'podman' is not
+  present or its daemon is unresponsive, falls back to 'docker'. You can explicitly
+  override the container engine by setting CONTAINER_CLI=podman or CONTAINER_CLI=docker.
+
 EXAMPLES:
-  # 1. Start Overleaf on port 8080 using native Podman Pod
+  # 1. Start Overleaf on port 8080
   overleaf-ctl.sh up --port 8080
 
   # 2. Build custom image with full TeX Live packages
@@ -73,22 +78,85 @@ EXAMPLES:
 EOF
 }
 
-check_podman() {
-  if ! command -v podman >/dev/null 2>&1; then
-    echo "Error: 'podman' command not found. Please install Podman first." >&2
+check_container_engine() {
+  if [[ -n "${CONTAINER_CLI:-}" ]]; then
+    CONTAINER_ENGINE="${CONTAINER_CLI}"
+  elif command -v podman >/dev/null 2>&1; then
+    CONTAINER_ENGINE="podman"
+  elif command -v docker >/dev/null 2>&1; then
+    CONTAINER_ENGINE="docker"
+  else
+    echo "Error: Neither 'podman' nor 'docker' command found on PATH." >&2
+    echo "Please install Podman (prioritized) or Docker first." >&2
     exit 1
   fi
 
-  # Check if podman engine is responsive
-  if ! podman info >/dev/null 2>&1; then
-    echo "Error: Podman engine is not responding or container daemon is stopped." >&2
-    echo "Hint: Ensure your Podman service or machine is started (e.g., 'podman machine start' if using a VM)." >&2
-    exit 1
+  # Validate that the selected container engine is responsive
+  if ! "${CONTAINER_ENGINE}" info >/dev/null 2>&1; then
+    # If podman was chosen because both are present, but podman daemon/machine is down while docker is up, fallback to docker
+    if [[ "${CONTAINER_ENGINE}" == "podman" && -z "${CONTAINER_CLI:-}" ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+      echo "Notice: 'podman' found but engine/machine is unresponsive. Falling back to active 'docker' daemon..." >&2
+      CONTAINER_ENGINE="docker"
+    else
+      echo "Error: Container engine '${CONTAINER_ENGINE}' is not responding or daemon is stopped." >&2
+      if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+        echo "Hint: Ensure your Podman machine or service is started (e.g., 'podman machine start')." >&2
+      else
+        echo "Hint: Ensure Docker Desktop or dockerd daemon is running." >&2
+      fi
+      exit 1
+    fi
+  fi
+  export CONTAINER_ENGINE
+}
+
+container_exists() {
+  local name="$1"
+  if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+    podman container exists "$name" 2>/dev/null
+  else
+    docker container inspect "$name" >/dev/null 2>&1
+  fi
+}
+
+volume_exists() {
+  local name="$1"
+  if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+    podman volume exists "$name" 2>/dev/null
+  else
+    docker volume inspect "$name" >/dev/null 2>&1
+  fi
+}
+
+image_exists() {
+  local name="$1"
+  if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+    podman image exists "$name" 2>/dev/null
+  else
+    docker image inspect "$name" >/dev/null 2>&1
+  fi
+}
+
+network_exists() {
+  local name="$1"
+  if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+    podman network exists "$name" 2>/dev/null
+  else
+    docker network inspect "$name" >/dev/null 2>&1
+  fi
+}
+
+pod_exists() {
+  local name="$1"
+  if [[ "${CONTAINER_ENGINE}" == "podman" ]]; then
+    podman pod exists "$name" 2>/dev/null
+  else
+    return 1
   fi
 }
 
 cmd_build() {
-  check_podman
+  check_container_engine
   local profile="recommended"
   local tag="overleaf-custom:latest"
   local containerfile="${SKILL_ROOT}/resources/Containerfile"
@@ -130,14 +198,14 @@ cmd_build() {
   fi
 
   echo "============================================================"
-  echo " Building Overleaf Community Edition Image"
+  echo " Building Overleaf Community Edition Image (${CONTAINER_ENGINE})"
   echo " Tag:              ${tag}"
   echo " TeX Live Profile: ${profile}"
   echo " Containerfile:    ${containerfile}"
   [[ -n "$platform" ]] && echo " Platform:         ${platform}"
   echo "============================================================"
 
-  local build_cmd=(podman build)
+  local build_cmd=("${CONTAINER_ENGINE}" build)
   if [[ -n "$platform" ]]; then
     build_cmd+=("--platform" "$platform")
   fi
@@ -152,14 +220,13 @@ cmd_build() {
 }
 
 cmd_up() {
-  check_podman
+  check_container_engine
   local port="${DEFAULT_PORT}"
   local image="${DEFAULT_IMAGE}"
   local mongo_image="${DEFAULT_MONGO_IMAGE}"
   local redis_image="${DEFAULT_REDIS_IMAGE}"
   local name="${DEFAULT_STACK_NAME}"
   local mode="${DEFAULT_MODE}"
-
   local platform=""
 
   while [[ $# -gt 0 ]]; do
@@ -200,30 +267,36 @@ cmd_up() {
     esac
   done
 
+  # Docker engine does not have native pods, fallback to network mode
+  if [[ "${CONTAINER_ENGINE}" == "docker" && "$mode" == "pod" ]]; then
+    echo "==> Notice: Docker engine does not support native pods. Using network mode."
+    mode="network"
+  fi
+
   # Create named persistent volumes if they do not exist
   echo "==> Ensuring persistent named volumes exist..."
   for vol in "${name}_data" "${name}_mongo_data" "${name}_redis_data"; do
-    if ! podman volume exists "$vol"; then
+    if ! volume_exists "$vol"; then
       echo "  Creating volume: $vol"
-      podman volume create "$vol" >/dev/null
+      "${CONTAINER_ENGINE}" volume create "$vol" >/dev/null
     fi
   done
 
   # Ensure the image is available locally with architecture fallback
-  if ! podman image exists "${image}"; then
+  if ! image_exists "${image}"; then
     echo "==> Ensuring image '${image}' is available..."
     if [[ -n "$platform" ]]; then
-      podman pull --platform "$platform" "${image}"
+      "${CONTAINER_ENGINE}" pull --platform "$platform" "${image}"
     else
-      if ! podman pull "${image}" 2>/dev/null; then
+      if ! "${CONTAINER_ENGINE}" pull "${image}" 2>/dev/null; then
         echo "==> Native architecture image not found upstream. Retrying with --platform linux/amd64..."
         platform="linux/amd64"
-        podman pull --platform linux/amd64 "${image}"
+        "${CONTAINER_ENGINE}" pull --platform linux/amd64 "${image}"
       fi
     fi
   fi
 
-  local run_server_cmd=(podman run -d)
+  local run_server_cmd=("${CONTAINER_ENGINE}" run -d)
   if [[ -n "$platform" ]]; then
     run_server_cmd+=("--platform" "$platform")
   fi
@@ -249,13 +322,13 @@ cmd_up() {
     local server_name="${name}-server"
 
     echo "============================================================"
-    echo " Starting Overleaf in Pod Mode (Pod: ${pod_name})"
+    echo " Starting Overleaf in Pod Mode (Podman, Pod: ${pod_name})"
     echo " Port Endpoint: http://localhost:${port}"
     echo " Image:         ${image}"
     echo "============================================================"
 
     # 1. Create Pod if not exists
-    if podman pod exists "${pod_name}"; then
+    if pod_exists "${pod_name}"; then
       echo "==> Pod '${pod_name}' already exists. Stopping and recreating to ensure fresh port config..."
       podman pod rm -f "${pod_name}" >/dev/null 2>&1 || true
     fi
@@ -300,43 +373,48 @@ cmd_up() {
       "${image}" >/dev/null
 
   else
-    # Network Mode
+    # Network Mode (Works with both Docker and Podman)
     local net_name="${name}-net"
     local mongo_name="${name}-mongo"
     local redis_name="${name}-redis"
     local server_name="${name}-server"
 
     echo "============================================================"
-    echo " Starting Overleaf in Network Mode (Network: ${net_name})"
+    echo " Starting Overleaf in Network Mode (${CONTAINER_ENGINE}, Network: ${net_name})"
     echo " Port Endpoint: http://localhost:${port}"
     echo " Image:         ${image}"
     echo "============================================================"
 
-    if ! podman network exists "${net_name}"; then
+    if ! network_exists "${net_name}"; then
       echo "==> Creating network: ${net_name}"
-      podman network create "${net_name}" >/dev/null
+      "${CONTAINER_ENGINE}" network create "${net_name}" >/dev/null
     fi
 
     # Remove existing containers if any
     for c in "${server_name}" "${mongo_name}" "${redis_name}"; do
-      if podman container exists "$c"; then
-        podman rm -f "$c" >/dev/null 2>&1 || true
+      if container_exists "$c"; then
+        "${CONTAINER_ENGINE}" rm -f "$c" >/dev/null 2>&1 || true
       fi
     done
 
+    local vol_flag=":Z"
+    if [[ "${CONTAINER_ENGINE}" == "docker" ]]; then
+      vol_flag=""
+    fi
+
     # 1. Start Redis
     echo "==> Starting Redis container '${redis_name}'..."
-    podman run -d --network "${net_name}" \
+    "${CONTAINER_ENGINE}" run -d --network "${net_name}" \
       --name "${redis_name}" \
-      -v "${name}_redis_data:/data:Z" \
+      -v "${name}_redis_data:/data${vol_flag}" \
       "${redis_image}" \
       redis-server --appendonly yes >/dev/null
 
     # 2. Start Mongo
     echo "==> Starting MongoDB container '${mongo_name}'..."
-    podman run -d --network "${net_name}" \
+    "${CONTAINER_ENGINE}" run -d --network "${net_name}" \
       --name "${mongo_name}" \
-      -v "${name}_mongo_data:/data/db:Z" \
+      -v "${name}_mongo_data:/data/db${vol_flag}" \
       "${mongo_image}" \
       mongod --bind_ip_all --replSet overleaf >/dev/null
 
@@ -348,7 +426,7 @@ cmd_up() {
     "${run_server_cmd[@]}" --network "${net_name}" \
       --name "${server_name}" \
       -p "${port}:80" \
-      -v "${name}_data:/var/lib/overleaf:Z" \
+      -v "${name}_data:/var/lib/overleaf${vol_flag}" \
       -e "OVERLEAF_SITE_URL=http://localhost:${port}" \
       -e "OVERLEAF_NAV_TITLE=Overleaf Community Edition" \
       -e "OVERLEAF_APP_NAME=Overleaf Community Edition" \
@@ -381,7 +459,7 @@ cmd_up() {
     local creds_file="${SKILL_ROOT}/.agent_credentials.json"
 
     echo "==> Automatically provisioning agent user '${agent_email}'..."
-    podman exec -i -w /overleaf/services/web "${server_name}" node --input-type=module - <<EOF >/dev/null 2>&1 || true
+    "${CONTAINER_ENGINE}" exec -i -w /overleaf/services/web "${server_name}" node --input-type=module - <<EOF >/dev/null 2>&1 || true
 import crypto from 'node:crypto';
 import UserRegistrationHandler from './app/src/Features/User/UserRegistrationHandler.mjs';
 import { User } from './app/src/models/User.mjs';
@@ -429,6 +507,7 @@ EOF
     echo "============================================================"
     echo " Overleaf Community Edition is READY for Programmatic Access"
     echo "============================================================"
+    echo " Container Engine:   ${CONTAINER_ENGINE}"
     echo " Web & API Endpoint: http://localhost:${port}"
     echo " Agent Account:      ${agent_email}"
     echo " Agent Credentials:  ${creds_file}"
@@ -442,12 +521,12 @@ EOF
     echo "============================================================"
   else
     echo "==> Overleaf container is still starting up in the background."
-    echo "    Check logs with: podman logs -f ${name}-server"
+    echo "    Check logs with: ${CONTAINER_ENGINE} logs -f ${name}-server"
   fi
 }
 
 cmd_down() {
-  check_podman
+  check_container_engine
   local name="${DEFAULT_STACK_NAME}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -461,50 +540,50 @@ cmd_down() {
     esac
   done
 
-  echo "==> Stopping Overleaf stack '${name}'..."
+  echo "==> Stopping Overleaf stack '${name}' (${CONTAINER_ENGINE})..."
   local pod_name="${name}-pod"
-  if podman pod exists "${pod_name}"; then
+  if pod_exists "${pod_name}"; then
     echo "  Removing pod '${pod_name}'..."
     podman pod rm -f "${pod_name}" >/dev/null 2>&1 || true
   fi
 
   for c in "${name}-server" "${name}-mongo" "${name}-redis"; do
-    if podman container exists "$c"; then
+    if container_exists "$c"; then
       echo "  Removing container '$c'..."
-      podman rm -f "$c" >/dev/null 2>&1 || true
+      "${CONTAINER_ENGINE}" rm -f "$c" >/dev/null 2>&1 || true
     fi
   done
 
-  if podman network exists "${name}-net"; then
+  if network_exists "${name}-net"; then
     echo "  Removing network '${name}-net'..."
-    podman network rm "${name}-net" >/dev/null 2>&1 || true
+    "${CONTAINER_ENGINE}" network rm "${name}-net" >/dev/null 2>&1 || true
   fi
 
   echo "==> Stack '${name}' stopped. (Persistent volumes retained)."
 }
 
 cmd_status() {
-  check_podman
+  check_container_engine
   local name="${DEFAULT_STACK_NAME}"
   local pod_name="${name}-pod"
 
   echo "============================================================"
-  echo " Overleaf Stack Status"
+  echo " Overleaf Stack Status (Engine: ${CONTAINER_ENGINE})"
   echo "============================================================"
 
-  if podman pod exists "${pod_name}"; then
+  if pod_exists "${pod_name}"; then
     echo "Pod: ${pod_name}"
     podman pod ps --filter "name=${pod_name}"
     echo ""
   fi
 
   echo "Containers:"
-  podman ps -a --filter "name=${name}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"
+  "${CONTAINER_ENGINE}" ps -a --filter "name=${name}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}"
   echo ""
 
   # Test endpoint reachability if running
   local port="${DEFAULT_PORT}"
-  if podman container exists "${name}-server"; then
+  if container_exists "${name}-server"; then
     echo "Checking endpoint status..."
     local http_code
     http_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${port}/launchpad" 2>/dev/null || echo "000")
@@ -517,24 +596,24 @@ cmd_status() {
 }
 
 cmd_logs() {
-  check_podman
+  check_container_engine
   local service="${1:-server}"
   local name="${DEFAULT_STACK_NAME}"
   case "$service" in
     server|overleaf)
-      podman logs -f "${name}-server"
+      "${CONTAINER_ENGINE}" logs -f "${name}-server"
       ;;
     mongo|mongodb)
-      podman logs -f "${name}-mongo"
+      "${CONTAINER_ENGINE}" logs -f "${name}-mongo"
       ;;
     redis)
-      podman logs -f "${name}-redis"
+      "${CONTAINER_ENGINE}" logs -f "${name}-redis"
       ;;
     all)
-      if podman pod exists "${name}-pod"; then
+      if pod_exists "${name}-pod"; then
         podman pod logs -f "${name}-pod"
       else
-        podman logs -f "${name}-server"
+        "${CONTAINER_ENGINE}" logs -f "${name}-server"
       fi
       ;;
     *)
@@ -545,7 +624,7 @@ cmd_logs() {
 }
 
 cmd_create_user() {
-  check_podman
+  check_container_engine
   local email=""
   local password=""
   local is_admin=true
@@ -574,13 +653,13 @@ cmd_create_user() {
   fi
 
   local server_name="${name}-server"
-  if ! podman container exists "${server_name}"; then
+  if ! container_exists "${server_name}"; then
     echo "Error: Container '${server_name}' is not running." >&2
     exit 1
   fi
 
   echo "==> Programmatically provisioning user '${email}' with direct password..."
-  podman exec -i -w /overleaf/services/web "${server_name}" node --input-type=module - <<EOF
+  "${CONTAINER_ENGINE}" exec -i -w /overleaf/services/web "${server_name}" node --input-type=module - <<EOF
 import crypto from 'node:crypto';
 import UserRegistrationHandler from './app/src/Features/User/UserRegistrationHandler.mjs';
 import AuthenticationManager from './app/src/Features/Authentication/AuthenticationManager.mjs';
@@ -633,7 +712,7 @@ cmd_create_admin() {
 }
 
 cmd_install_pkg() {
-  check_podman
+  check_container_engine
   local name="${DEFAULT_STACK_NAME}"
   local server_name="${name}-server"
 
@@ -643,29 +722,29 @@ cmd_install_pkg() {
     exit 1
   fi
 
-  if ! podman container exists "${server_name}"; then
+  if ! container_exists "${server_name}"; then
     echo "Error: Container '${server_name}' is not running." >&2
     exit 1
   fi
 
   echo "==> Installing package(s): $* via tlmgr..."
-  podman exec -it "${server_name}" tlmgr install "$@"
+  "${CONTAINER_ENGINE}" exec -it "${server_name}" tlmgr install "$@"
   echo "==> Installation complete!"
 }
 
 cmd_shell() {
-  check_podman
+  check_container_engine
   local name="${DEFAULT_STACK_NAME}"
   local server_name="${name}-server"
-  if ! podman container exists "${server_name}"; then
+  if ! container_exists "${server_name}"; then
     echo "Error: Container '${server_name}' is not running." >&2
     exit 1
   fi
-  podman exec -it "${server_name}" /bin/bash
+  "${CONTAINER_ENGINE}" exec -it "${server_name}" /bin/bash
 }
 
 cmd_clean() {
-  check_podman
+  check_container_engine
   local delete_volumes=false
   local name="${DEFAULT_STACK_NAME}"
 
@@ -690,9 +769,9 @@ cmd_clean() {
   if [[ "$delete_volumes" == "true" ]]; then
     echo "==> WARNING: Deleting persistent data volumes..."
     for vol in "${name}_data" "${name}_mongo_data" "${name}_redis_data"; do
-      if podman volume exists "$vol"; then
+      if volume_exists "$vol"; then
         echo "  Deleting volume: $vol"
-        podman volume rm "$vol" >/dev/null 2>&1 || true
+        "${CONTAINER_ENGINE}" volume rm "$vol" >/dev/null 2>&1 || true
       fi
     done
     echo "==> Volumes removed."

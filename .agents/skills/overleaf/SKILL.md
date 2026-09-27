@@ -1,16 +1,17 @@
 ---
 name: overleaf
 description: >-
-  Build and run Overleaf Community Edition (ShareLaTeX) container service using Podman for programmatic
+  Build and run Overleaf Community Edition (ShareLaTeX) container service using Podman or Docker for programmatic
   AI agent access. Use when an agent needs to start Overleaf, create/manage LaTeX projects, compile
-  documents, download PDFs, and interact via REST APIs without manual web setup across any processor architecture.
+  TeX documents, download PDFs, and interact via REST APIs without manual web setup across any processor architecture.
 ---
 
-# Overleaf Community Edition for AI Agents (Podman)
+# Overleaf Community Edition for AI Agents (Podman / Docker)
 
-This skill provides step-by-step instructions and automated utilities to build, run, configure, and **programmatically interact** with an **Overleaf Community Edition** service via **Podman**.
+This skill provides step-by-step instructions and automated utilities to build, run, configure, and **programmatically interact** with an **Overleaf Community Edition** service via **Podman** or **Docker** (with Podman prioritized when both are present).
 
 The service is configured for **fully autonomous programmatic access**:
+- **Container Engine Agnostic**: Auto-detects and supports both `podman` and `docker`. Podman is prioritized when both runtimes are present. An override can be passed via `CONTAINER_CLI=docker` or `CONTAINER_CLI=podman`.
 - **Zero Manual Setup**: On startup, an agent user account is automatically provisioned in MongoDB with pre-authenticated session credentials, bypassing the manual `/launchpad` web browser wizard entirely.
 - **REST API & CLI**: The included [overleaf-api.sh](./scripts/overleaf-api.sh) allows agents to create projects, upload documents, trigger compilations, and retrieve PDFs programmatically.
 - **Architecture & OS Neutral**: Operates identically on `x86_64`/`amd64`, `aarch64`/`arm64`, Linux, macOS, and container environments without processor-specific hardcoding.
@@ -26,7 +27,7 @@ Use [overleaf-ctl.sh](./scripts/overleaf-ctl.sh) to start the stack and automati
 ```
 
 When startup completes, the script:
-1. Starts Redis, MongoDB (with active replica set), and Overleaf in a unified Podman Pod.
+1. Starts Redis, MongoDB (with active replica set), and Overleaf in a unified Podman Pod (or Docker container bridge network).
 2. Automatically provisions an agent user (`agent@local.overleaf`) with persistent credentials saved in `.agent_credentials.json`.
 3. Pre-authenticates and writes the session cookie to `.session_cookie`.
 4. Outputs the endpoint URL and ready-to-use programmatic commands.

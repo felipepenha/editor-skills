@@ -230,7 +230,9 @@ local/
 .agents/skills/overleaf/overleaf.env
 
 # `overleaf` example outputs
-.agents/skills/overleaf/examples/*.pdf
+.agents/skills/**/*.pdf
+.agents/skills/**/*.aux
+.agents/skills/**/*.png
 
 # macOS
 .DS_Store
