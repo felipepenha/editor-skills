@@ -23,6 +23,7 @@ COMMANDS:
   upload-project    Upload a .tex file, directory, or .zip to create a project
   compile           Trigger compilation and optionally download the generated PDF
   download-pdf      Download compiled PDF for a project
+  sync-down         Download and extract project zip to a local directory
   status            Check authenticated API connectivity
 
 OPTIONS:
@@ -399,6 +400,52 @@ cmd_download_pdf() {
   cmd_compile --project-id "$project_id" --output "$output_pdf"
 }
 
+cmd_sync_down() {
+  local base_url
+  base_url=$(get_base_url)
+  local project_id=""
+  local target_dir=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-id) project_id="$2"; shift 2 ;;
+      --dir) target_dir="$2"; shift 2 ;;
+      --url) base_url="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$project_id" ]]; then
+    echo "Error: --project-id <id> is required." >&2
+    exit 1
+  fi
+
+  if [[ -z "$target_dir" ]]; then
+    echo "Error: --dir <directory> is required." >&2
+    exit 1
+  fi
+
+  ensure_authenticated
+
+  echo "==> Syncing down project ${project_id} to ${target_dir}..."
+  
+  local zip_file="${target_dir}/.sync_download.zip"
+  mkdir -p "$target_dir"
+  
+  local http_code
+  http_code=$(curl -s -w "%{http_code}" -b "$COOKIE_JAR" "${base_url}/project/${project_id}/download/zip" -o "$zip_file")
+  
+  if [[ "$http_code" == "200" ]]; then
+    unzip -q -o "$zip_file" -d "$target_dir"
+    rm -f "$zip_file"
+    echo "==> Successfully synced down project to ${target_dir}."
+  else
+    echo "Error: Failed to download project. HTTP status ${http_code}" >&2
+    rm -f "$zip_file"
+    exit 1
+  fi
+}
+
 cmd_list_projects() {
   local base_url
   base_url=$(get_base_url)
@@ -469,6 +516,7 @@ main() {
     upload-project|upload) cmd_upload_project "$@" ;;
     compile) cmd_compile "$@" ;;
     download-pdf) cmd_download_pdf "$@" ;;
+    sync-down) cmd_sync_down "$@" ;;
     list-projects|projects) cmd_list_projects "$@" ;;
     status) cmd_status "$@" ;;
     help|--help|-h) usage ;;

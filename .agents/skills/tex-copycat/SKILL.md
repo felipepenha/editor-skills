@@ -98,6 +98,20 @@ Once compiled and visually verified, push the complete project into Overleaf:
 ```
 Then navigate the browser to the returned project URL (`http://localhost:8080/project/<PROJECT_ID>`) using `browser_subagent`.
 
+### E. Live Local Synchronization
+Because Overleaf stores source files in a database, modifications made in the web UI will not automatically propagate back to the local agent workspace.
+To explicitly pull down the updated files from the container back to the host filesystem:
+```bash
+./.agents/skills/overleaf/scripts/overleaf-api.sh sync-down \
+  --project-id <PROJECT_ID> \
+  --dir local/<project-name>
+```
+
+If the user requests continuous background syncing while they edit in the browser, spawn an infinite bash loop as a daemon (`IsDaemon=true`) using the `run_command` tool to pull changes periodically (e.g., every 5 seconds):
+```bash
+while true; do ./.agents/skills/overleaf/scripts/overleaf-api.sh sync-down --project-id <PROJECT_ID> --dir local/<project-name>; sleep 5; done
+```
+
 ---
 
 ## 3. End-to-End Paper Reproduction Workflow
