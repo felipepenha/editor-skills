@@ -15,3 +15,7 @@ Collection of Skills for Text Editor Agents.
 | :--- | :--- |
 | **`overleaf`** | `podman` (preferred) or `docker` |
 | **`tex-copycat`** | `overleaf` skill, `podman` (preferred) or `docker` |
+
+## Usage Notes
+
+The `local/` subdirectory is configured to be ignored by git. Use this directory as a sandbox to place your `.tex` files, or ask the agent to create its own `.tex` files there.
