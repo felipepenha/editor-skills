@@ -34,6 +34,9 @@ RUN if [ "$TEXLIVE_PROFILE" = "full" ]; then \
             latexmk \
             biber \
             biblatex \
+            collection-pictures \
+            pgf \
+            pgfplots \
             collection-latexrecommended \
             collection-latexextra \
             collection-fontsrecommended \
