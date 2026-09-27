@@ -34,6 +34,8 @@ RUN if [ "$TEXLIVE_PROFILE" = "full" ]; then \
             latexmk \
             biber \
             biblatex \
+            beamer \
+            translator \
             collection-pictures \
             pgf \
             pgfplots \

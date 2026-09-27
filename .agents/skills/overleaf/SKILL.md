@@ -204,8 +204,9 @@ To create additional users or update passwords without web interface:
 - [overleaf-ctl.sh](./scripts/overleaf-ctl.sh): Stack lifecycle and automated container provisioning.
 - [overleaf-api.sh](./scripts/overleaf-api.sh): Programmatic API client for agents (login, create, upload, compile, download).
 - [init-replica-set.sh](./scripts/init-replica-set.sh): MongoDB replica set initializer.
-- [sample_paper.tex](./examples/sample_paper.tex): Complete sample academic LaTeX paper demonstrating equations, matrices, tables, and citations.
-- [Containerfile](./resources/Containerfile): Custom container build recipe with TeX Live profiles.
+- [sample_paper.tex](./examples/sample_paper.tex): Complete sample academic LaTeX paper demonstrating equations, matrices, tables, TikZ, and PGFPlots.
+- [sample_presentation.tex](./examples/sample_presentation.tex): 16:9 Beamer slide deck with Madrid theme, TikZ diagrams, and PGFPlots charts.
+- [Containerfile](./resources/Containerfile): Custom container build recipe with TeX Live profiles (Beamer, TikZ, PGFPlots included).
 - [overleaf.env.example](./resources/overleaf.env.example): Environment configuration reference.
 - [architecture.md](./references/architecture.md): Service architecture and storage persistence.
 - [troubleshooting.md](./references/troubleshooting.md): Diagnostics for MongoDB, ports, and LaTeX compilation.
