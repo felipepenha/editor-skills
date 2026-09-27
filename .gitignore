@@ -216,3 +216,21 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.secret*
+
+# Ignore all files under local (local development)
+local/
+
+# `overleaf` local credentials and session state
+.session_cookie*
+.agent_credentials.json
+.agents/skills/overleaf/.secret*
+.agents/skills/overleaf/.session_cookie*
+.agents/skills/overleaf/.agent_credentials.json
+.agents/skills/overleaf/overleaf.env
+
+# `overleaf` example outputs
+.agents/skills/overleaf/examples/*.pdf
+
+# macOS
+.DS_Store

@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1
+ARG BASE_IMAGE=docker.io/sharelatex/sharelatex:latest
+FROM ${BASE_IMAGE}
+
+LABEL maintainer="Antigravity Editor Skills"
+LABEL description="Overleaf Community Edition container with extended TeX Live and utilities"
+
+# Profile option: 'recommended' (default) or 'full'
+ARG TEXLIVE_PROFILE=recommended
+
+USER root
+
+# Install system dependencies (pygments for minted, ghostscript, common fonts)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pygments \
+    ghostscript \
+    fonts-liberation \
+    fonts-lmodern \
+    fonts-font-awesome \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Update TeX Live package manager (tlmgr)
+RUN tlmgr update --self || true
+
+# Install TeX Live collections/packages based on profile
+RUN if [ "$TEXLIVE_PROFILE" = "full" ]; then \
+        echo "Installing scheme-full (this will take several minutes)..." && \
+        tlmgr install scheme-full; \
+    else \
+        echo "Installing recommended TeX Live packages and collections..." && \
+        tlmgr install \
+            latexmk \
+            biber \
+            biblatex \
+            collection-latexrecommended \
+            collection-latexextra \
+            collection-fontsrecommended \
+            collection-fontsextra \
+            collection-bibtexextra \
+            collection-mathscience; \
+    fi
+
+# Rehash TeX font and format caches
+RUN texhash && (fmtutil-sys --all || true)
+
+# Default ShareLaTeX entrypoint
+ENTRYPOINT ["/sbin/my_init"]
